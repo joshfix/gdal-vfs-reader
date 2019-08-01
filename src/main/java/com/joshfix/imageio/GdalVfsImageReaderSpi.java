@@ -134,7 +134,7 @@ public class GdalVfsImageReaderSpi extends GDALImageReaderSpi {
     }
 
     public ImageReader createReaderInstance(Object extension) {
-        return new GdalVfsImageReader(this);
+        return new GdalVfsImageReader(this, 1);
     }
 
     @Override

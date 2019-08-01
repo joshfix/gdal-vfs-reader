@@ -16,6 +16,10 @@ public class GdalVfsImageInputStreamSpi extends ImageInputStreamSpi {
     public ImageInputStream createInputStreamInstance(Object input, boolean useCache, File cacheDir) {
         if (input instanceof URL) {
             String url = input.toString();
+            // TODO figure out how to handle external overviews
+            if (url.endsWith(".ovr")) {
+                return null;
+            }
             if (url.startsWith("wasb")) {
                 url = url.replace("wasb://destination@imageryproducts.blob.core.windows.net/", "/vsiaz/destination/");
             }

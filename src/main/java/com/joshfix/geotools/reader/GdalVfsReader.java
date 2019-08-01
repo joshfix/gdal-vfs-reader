@@ -4,7 +4,6 @@ import com.joshfix.imageio.GdalVfsImageReaderSpi;
 import it.geosolutions.imageio.gdalframework.GDALCommonIIOImageMetadata;
 import it.geosolutions.imageio.gdalframework.GDALUtilities;
 import it.geosolutions.imageio.maskband.DatasetLayout;
-import org.gdal.gdal.Band;
 import org.gdal.gdal.Dataset;
 import org.gdal.gdal.gdal;
 import org.gdal.gdalconst.gdalconstConstants;
@@ -16,10 +15,10 @@ import org.geotools.coverage.grid.GridCoverageFactory;
 import org.geotools.coverage.grid.GridEnvelope2D;
 import org.geotools.coverage.grid.GridGeometry2D;
 import org.geotools.coverage.grid.io.AbstractGridCoverage2DReader;
+import org.geotools.coverage.grid.io.AbstractGridFormat;
 import org.geotools.coverage.grid.io.GridCoverage2DReader;
 import org.geotools.coverage.grid.io.OverviewPolicy;
 import org.geotools.coverage.util.CoverageUtilities;
-import org.geotools.coverageio.gdal.BaseGDALGridCoverage2DReader;
 import org.geotools.data.*;
 import org.geotools.geometry.GeneralEnvelope;
 import org.geotools.geometry.PixelTranslation;
@@ -43,6 +42,7 @@ import org.opengis.referencing.operation.MathTransform;
 import org.opengis.referencing.operation.TransformException;
 
 import javax.imageio.ImageReader;
+import javax.imageio.metadata.IIOMetadata;
 import javax.imageio.spi.ImageReaderSpi;
 import javax.media.jai.ImageLayout;
 import javax.media.jai.PlanarImage;
@@ -50,7 +50,6 @@ import java.awt.*;
 import java.awt.geom.AffineTransform;
 import java.awt.image.*;
 import java.io.IOException;
-import java.nio.*;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
@@ -64,14 +63,11 @@ import java.util.logging.Logger;
 public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridCoverage2DReader {//AbstractGridCoverage2DReader {//implements GridCoverage2DReader {
 
     private VfsPath vfsPath;
-    private Dataset dataset;
+    //private Dataset dataset;
     private ConcurrentHashMap<String, GDALCommonIIOImageMetadata> datasetMetadataMap = new ConcurrentHashMap<>();
 
     /**The coverage factory producing a {@link GridCoverage} from an image */
     private GridCoverageFactory coverageFactory;
-
-    /** Small number used for double comparisons */
-    protected static double EPS = 1e-6;
 
     /** This contains the number of overviews.aaa */
     protected int numOverviews = 0;
@@ -106,7 +102,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     /** crs for this coverage */
     protected CoordinateReferenceSystem crs = null;
 
-    private ConcurrentHashMap<String, Dataset> datasetsMap = new ConcurrentHashMap<>();
+    //private ConcurrentHashMap<String, Dataset> datasetsMap = new ConcurrentHashMap<>();
 
     /** number of subdatasets */
     private int subDatasetSize = -1;
@@ -114,7 +110,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     /**
      * list of childs subdatasets names (if any) contained into the source
      */
-    private String[] datasetNames;
+    //private String[] datasetNames;
 
     private Map<String, ArrayList<Resolution>> resolutionsLevelsMap = new HashMap<>();
 
@@ -124,17 +120,16 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     /** Coverage {@link DatasetLayout} containing information about Overviews and Mask management */
     protected DatasetLayout dtLayout;
 
-    private static final String worldFileExt = "";
-
     /** Caches an {@code ImageReaderSpi}. */
-    private ImageReaderSpi readerSPI;
+    protected ImageReaderSpi imageReaderSpi;
 
+    protected ImageReader imageReader;
     private static final Logger LOGGER =
             org.geotools.util.logging.Logging.getLogger(GdalVfsReader.class);
 
     static {
-        gdal.AllRegister();
-
+        //gdal.AllRegister();
+        GDALUtilities.loadGDAL();
         gdal.SetConfigOption("CHECK_DISK_FREE_SPACE", "FALSE");
         // config options per https://trac.osgeo.org/gdal/wiki/CloudOptimizedGeoTIFF#HowtoreaditwithGDAL
         gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES");
@@ -142,20 +137,24 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         gdal.SetConfigOption("CPL_CURL_VERBOSE", "YES");
         gdal.SetConfigOption("GDAL_PAM_ENABLED", "NO");
     }
-/*
+
     public GdalVfsReader(VfsPath vfsPath) throws DataSourceException {
         this(vfsPath, null);
-    }*/
+    }
 
-
-    public GdalVfsReader(VfsPath vfsPath) throws DataSourceException {
-
-        //    super(vfsPath, hints, worldFileExt, null);
+    public GdalVfsReader(VfsPath vfsPath, Hints hints) throws DataSourceException {
+        super(vfsPath, null);
 
 
 
-        readerSPI = new GdalVfsImageReaderSpi();
-        //super(vfsPath, hints, worldFileExt, new GdalVfsImageReaderSpi());
+        imageReaderSpi = new GdalVfsImageReaderSpi();
+        try {
+            imageReader = imageReaderSpi.createReaderInstance();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        imageReader.setInput(new GdalVfsImageInputStream(vfsPath));
+
         // GridCoverageFactory initialization
         if (this.hints.containsKey(Hints.GRID_COVERAGE_FACTORY)) {
             final Object factory = this.hints.get(Hints.GRID_COVERAGE_FACTORY);
@@ -168,8 +167,9 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         }
 
         this.vfsPath = vfsPath;
-        populateMetadata();
+
         try {
+            setCoverageProperties(imageReader);
             getResolutionInfo();
         } catch (IOException e) {
             e.printStackTrace();
@@ -177,18 +177,9 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
             e.printStackTrace();
         }
     }
-
+/*
     protected void populateMetadata() {
         dataset = GDALUtilities.acquireDataSet(vfsPath.getPath(), gdalconstConstants.GA_ReadOnly);
-        /*
-        List<String> translateOptions = new ArrayList<>();
-        translateOptions.add("-ot");
-        translateOptions.add("Byte");
-
-        String name = "/vsimem/" + UUID.randomUUID();
-
-        dataset = gdal.Translate(name, dataset, new TranslateOptions(new Vector(translateOptions)));
-*/
         LOGGER.info(new StringBuilder("Opened dataset... last error: ").append(
                 gdal.GetLastErrorMsg()).toString());
         if (dataset == null) {
@@ -231,7 +222,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
             parseCommonMetadata(metadata);
         }
     }
-
+*/
     /**
      * Gets resolution information about the coverage itself.
      *
@@ -279,6 +270,8 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     }
 
     /**
+     * Taken from BaseGDALGridCoverage2DReader
+     *
      * Given a {@link GDALCommonIIOImageMetadata} metadata object, retrieves several properties to
      * properly set envelope, gridrange and crs.
      *
@@ -602,37 +595,9 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         System.out.println("maxX: " + maxX);
         System.out.println("maxY: " + maxY);
 
-        SampleModel sampleModel = datasetMetadataMap.get(vfsPath.getPath()).getSampleModel();
-        ColorModel colorModel = GDALUtilities.buildColorModel(sampleModel);
-
-
-        /*
-        BufferedImage bi = getBufferedImageFromDataset(result);
-        GridCoverage coverage = createCoverageFromImage(PlanarImage.wrapRenderedImage(bi));
-        */
-
-        int[] bands = new int[sampleModel.getNumBands()];
-        for (int i = 0; i < sampleModel.getNumBands(); i++) {
-            bands[i] = i + 1;
-        }
-
-        GDALCommonIIOImageMetadata itemMetadata = datasetMetadataMap.get(vfsPath.getPath());
-
-        Raster raster = readDatasetRaster(
-                itemMetadata,
-                new Rectangle(minX, minY, maxX, maxY),
-                new Rectangle(minX, minY, maxX, maxY),
-                //new int[]{1},
-                bands,
-                sampleModel
-                );
-        WritableRaster writableRaster = raster.createCompatibleWritableRaster();
-        writableRaster.setDataElements(0, 0, raster);
-        BufferedImage image = new BufferedImage(colorModel, writableRaster, colorModel.isAlphaPremultiplied(), null);
-
-        GridCoverage coverage = createCoverageFromImage(PlanarImage.wrapRenderedImage(image));
-
-
+        // TODO - how do you get the image index??
+        BufferedImage bi  = imageReader.read(0);
+        GridCoverage coverage = createImageCoverage(PlanarImage.wrapRenderedImage(bi));
         return (GridCoverage2D) coverage;
     }
 
@@ -714,10 +679,10 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         return getNumOverviews(coverageName);
     }
 
-    @Override
-    public DatasetLayout getDatasetLayout() {
-        return null;
-    }
+    //@Override
+    //public DatasetLayout getDatasetLayout() {
+    //    return null;
+   // }
 
     @Override
     public DatasetLayout getDatasetLayout(String coverageName) {
@@ -939,406 +904,6 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         this.vfsPath = vfsPath;
     }
 
-    /**
-     * Read data from the required region of the raster.
-     *
-     * @param itemMetadata
-     *                a <code>GDALCommonIIOImageMetadata</code> related to the
-     *                actual dataset
-     * @param srcRegion
-     *                the source Region to be read
-     * @param dstRegion
-     *                the destination Region of the image read
-     * @param selectedBands
-     *                an array specifying the requested bands
-     * @return the read <code>Raster</code>
-     */
-    private Raster readDatasetRaster(
-            GDALCommonIIOImageMetadata itemMetadata,
-            Rectangle srcRegion,
-            Rectangle dstRegion,
-            int[] selectedBands,
-            SampleModel destSampleModel) throws IOException {
-
-        SampleModel destSm = destSampleModel != null ? destSampleModel : itemMetadata.getSampleModel();
-
-        final Dataset dataset = datasetsMap.get(itemMetadata.getDatasetName());
-        if (dataset == null)
-            throw new IOException("Error while acquiring the input dataset " + itemMetadata.getDatasetName());
-
-        SampleModel sampleModel = null;
-        DataBuffer imgBuffer = null;
-        Band pBand = null;
-        try {
-            int dstWidth = dstRegion.width;
-            int dstHeight = dstRegion.height;
-            int srcRegionXOffset = srcRegion.x;
-            int srcRegionYOffset = srcRegion.y;
-            int srcRegionWidth = srcRegion.width;
-            int srcRegionHeight = srcRegion.height;
-
-            if (LOGGER.isLoggable(Level.FINE))
-                LOGGER.fine("SourceRegion = " + srcRegion.toString());
-
-            // Getting number of bands
-            final int nBands = selectedBands != null ? selectedBands.length
-                    : destSm.getNumBands();
-
-            int[] banks = new int[nBands];
-            int[] offsets = new int[nBands];
-
-            // setting the number of pixels to read
-            final int pixels = dstWidth * dstHeight;
-            int bufferType = 0, bufferSize = 0;
-            int typeSizeInBytes = 0;
-
-            // ////////////////////////////////////////////////////////////////////
-            //
-            // -------------------------------------------------------------------
-            // Raster Creation >>> Step 2: Data Read
-            // -------------------------------------------------------------------
-            //
-            // ////////////////////////////////////////////////////////////////////
-
-            // NOTE: Bands are not 0-base indexed, so we must add 1
-            pBand = dataset.GetRasterBand(1);
-
-            // setting buffer properties
-            bufferType = pBand.getDataType();
-            typeSizeInBytes = gdal.GetDataTypeSize(bufferType) / 8;
-            bufferSize = nBands * pixels * typeSizeInBytes;
-
-            // splitBands = false -> I read n Bands at once.
-            // splitBands = false -> I need to read 1 Band at a time.
-            boolean splitBands = false;
-
-            if (bufferSize < 0 || destSm instanceof BandedSampleModel) {
-                // The number resulting from the product
-                // "numBands*pixels*gdal.GetDataTypeSize(buf_type) / 8"
-                // may be negative (A very high number which is not
-                // "int representable")
-                // In such a case, we will read 1 band at a time.
-                bufferSize = pixels * typeSizeInBytes;
-                splitBands = true;
-            }
-
-            int dataBufferType = -1;
-            byte[][] byteBands = new byte[nBands][];
-            for (int k = 0; k < nBands; k++) {
-
-                // If I'm reading n Bands at once and I performed the first read,
-                // I quit the loop
-                if (k > 0 && !splitBands)
-                    break;
-
-                final byte[] dataBuffer = new byte[bufferSize];
-
-                final int returnVal;
-                if (!splitBands) {
-                    // I can read nBands at once.
-                    final int[] bandsMap = new int[nBands];
-                    if (selectedBands != null) {
-                        for (int i = 0; i < nBands; i++)
-                            // TODO: original code calls selectedBands[i] +1, but that seems to break it.  works if you don't add 1
-                            //bandsMap[i] = selectedBands[i] + 1;
-                            bandsMap[i] = selectedBands[i];
-                    } else {
-                        for (int i = 0; i < nBands; i++)
-                            bandsMap[i] = i + 1;
-                    }
-
-                    returnVal = dataset.ReadRaster(srcRegionXOffset,
-                            srcRegionYOffset, srcRegionWidth, srcRegionHeight,
-                            dstWidth, dstHeight, bufferType, dataBuffer, bandsMap,
-                            nBands * typeSizeInBytes, dstWidth * nBands
-                                    * typeSizeInBytes, typeSizeInBytes);
-
-                    byteBands[k] = dataBuffer;
-                } else {
-                    // I need to read 1 band at a time.
-                    Band rBand = null;
-                    try{
-                        rBand = dataset.GetRasterBand(k + 1);
-                        returnVal = rBand.ReadRaster(
-                                srcRegionXOffset, srcRegionYOffset, srcRegionWidth,
-                                srcRegionHeight, dstWidth, dstHeight, bufferType,
-                                dataBuffer);
-                        byteBands[k] = dataBuffer;
-                    } finally {
-                        if (rBand != null){
-                            try{
-                                // Closing the band
-                                rBand.delete();
-                            }catch (Throwable e) {
-                                if(LOGGER.isLoggable(Level.FINEST))
-                                    LOGGER.log(Level.FINEST,e.getLocalizedMessage(),e);
-                            }
-                        }
-                    }
-                }
-                if (returnVal == gdalconstConstants.CE_None) {
-                    if (!splitBands)
-                        for (int band = 0; band < nBands; band++) {
-                            banks[band] = band;
-                            offsets[band] = band;
-                        }
-                    else {
-                        banks[k] = k;
-                        offsets[k] = 0;
-                    }
-                } else {
-                    // The read operation was not successfully computed.
-                    // Showing error messages.
-                    LOGGER.info(new StringBuilder("Last error: ").append(
-                            gdal.GetLastErrorMsg()).toString());
-                    LOGGER.info(new StringBuilder("Last error number: ").append(
-                            gdal.GetLastErrorNo()).toString());
-                    LOGGER.info(new StringBuilder("Last error type: ").append(
-                            gdal.GetLastErrorType()).toString());
-                    throw new RuntimeException(gdal.GetLastErrorMsg());
-                }
-            }
-
-            // ////////////////////////////////////////////////////////////////////
-            //
-            // -------------------------------------------------------------------
-            // Raster Creation >>> Step 3: Setting DataBuffer
-            // -------------------------------------------------------------------
-            //
-            // //////       //////////////////////////////////////////////////////////////
-
-            // /////////////////////////////////////////////////////////////////////
-            //
-            // TYPE BYTE
-            //
-            // /////////////////////////////////////////////////////////////////////
-            if (bufferType == gdalconstConstants.GDT_Byte) {
-                if (!splitBands) {
-                    //                final byte[] bytes = new byte[nBands * pixels];
-                    //                bands[0].get(bytes, 0, nBands * pixels);
-                    imgBuffer = new DataBufferByte(byteBands[0], nBands * pixels);
-                } else {
-                    //                final byte[][] bytes = new byte[nBands][];
-                    //                for (int i = 0; i < nBands; i++) {
-                    ////                    bytes[i] = new byte[pixels];
-                    //                    bands[i].get(bytes[i], 0, pixels);
-                    //                }
-                    imgBuffer = new DataBufferByte(byteBands, pixels);
-                }
-                dataBufferType = DataBuffer.TYPE_BYTE;
-            }
-            else {
-                ByteBuffer[] bands = new ByteBuffer[nBands];
-                for (int k = 0; (splitBands && k < nBands) || (k < 1 && !splitBands); k++) {
-                    bands[k]=ByteBuffer.wrap(byteBands[k],0,byteBands[k].length);
-                }
-
-                if (bufferType == gdalconstConstants.GDT_Int16
-                        || bufferType == gdalconstConstants.GDT_UInt16) {
-                    // ////////////////////////////////////////////////////////////////
-                    //
-                    // TYPE SHORT
-                    //
-                    // ////////////////////////////////////////////////////////////////
-
-                    if (!splitBands) {
-                        // I get short values from the ByteBuffer using a view
-                        // of the ByteBuffer as a ShortBuffer
-                        // It is worth to create the view outside the loop.
-                        short[] shorts = new short[nBands * pixels];
-                        bands[0].order(ByteOrder.nativeOrder());
-                        final ShortBuffer buff = bands[0].asShortBuffer();
-                        buff.get(shorts, 0, nBands * pixels);
-                        if (bufferType == gdalconstConstants.GDT_Int16)
-                            imgBuffer = new DataBufferShort(shorts, nBands * pixels);
-                        else
-                            imgBuffer = new DataBufferUShort(shorts, nBands * pixels);
-                    } else {
-                        short[][] shorts = new short[nBands][];
-                        for (int i = 0; i < nBands; i++) {
-                            shorts[i] = new short[pixels];
-                            bands[i].order(ByteOrder.nativeOrder());
-                            bands[i].asShortBuffer().get(shorts[i], 0, pixels);
-                        }
-                        if (bufferType == gdalconstConstants.GDT_Int16)
-                            imgBuffer = new DataBufferShort(shorts, pixels);
-                        else
-                            imgBuffer = new DataBufferUShort(shorts, pixels);
-                    }
-                    if (bufferType == gdalconstConstants.GDT_UInt16)
-                        dataBufferType = DataBuffer.TYPE_USHORT;
-                    else
-                        dataBufferType = DataBuffer.TYPE_SHORT;
-                } else if (bufferType == gdalconstConstants.GDT_Int32
-                        || bufferType == gdalconstConstants.GDT_UInt32) {
-                    // ////////////////////////////////////////////////////////////////
-                    //
-                    // TYPE INT
-                    //
-                    // ////////////////////////////////////////////////////////////////
-
-                    if (!splitBands) {
-                        // I get int values from the ByteBuffer using a view
-                        // of the ByteBuffer as an IntBuffer
-                        // It is worth to create the view outside the loop.
-                        int[] ints = new int[nBands * pixels];
-                        bands[0].order(ByteOrder.nativeOrder());
-                        final IntBuffer buff = bands[0].asIntBuffer();
-                        buff.get(ints, 0, nBands * pixels);
-                        imgBuffer = new DataBufferInt(ints, nBands * pixels);
-                    } else {
-                        int[][] ints = new int[nBands][];
-                        for (int i = 0; i < nBands; i++) {
-                            ints[i] = new int[pixels];
-                            bands[i].order(ByteOrder.nativeOrder());
-                            bands[i].asIntBuffer().get(ints[i], 0, pixels);
-                        }
-                        imgBuffer = new DataBufferInt(ints, pixels);
-                    }
-                    dataBufferType = DataBuffer.TYPE_INT;
-
-                } else if (bufferType == gdalconstConstants.GDT_Float32) {
-                    // /////////////////////////////////////////////////////////////////////
-                    //
-                    // TYPE FLOAT
-                    //
-                    // /////////////////////////////////////////////////////////////////////
-
-                    if (!splitBands) {
-                        int length = byteBands[0].length;
-                        // I get float values from the ByteBuffer using a view
-                        // of the ByteBuffer as a FloatBuffer
-                        // It is worth to create the view outside the loop.
-                        float[] floats = new float[nBands * pixels];
-                        bands[0].order(ByteOrder.nativeOrder());
-                        //bands[0].order(ByteOrder.LITTLE_ENDIAN);
-                        //bands[0].order(ByteOrder.BIG_ENDIAN);
-                        final FloatBuffer buff = bands[0].asFloatBuffer();
-/*
-                        byte[] bytes = bands[0].array();
-                        for (int i = 0; i + 4 < bytes.length; i = i + 4) {
-
-                            int asInt = (bytes[i] & 0xFF)
-                                    | ((bytes[i + 1] & 0xFF) << 8)
-                                    | ((bytes[i + 2] & 0xFF) << 16)
-                                    | ((bytes[i + 3] & 0xFF) << 24);
-                            float asFloat = Float.intBitsToFloat(asInt);
-                            floats[i] = asFloat;
-                        }
-                        imgBuffer = new DataBufferFloat(floats, nBands * pixels);
-*/
-
-
-                        buff.get(floats, 0, nBands * pixels);
-                        imgBuffer = new DataBufferFloat(floats, nBands * pixels);
-                        System.out.println("float array length: " + floats.length);
-
-                        int nanCount = 0;
-                        int nonZeroCount = 0;
-                        int zeroCount = 0;
-                        int unknownCount = 0;
-                        for (int i = 0; i < floats.length; i++) {
-                            if (Float.isNaN(floats[i])) {
-                                nanCount++;
-                            } else if (floats[i] != 0) {
-                                nonZeroCount++;
-                            } else if (floats[i] == 0) {
-                                zeroCount++;
-                            } else {
-                                unknownCount++;
-                            }
-                        }
-
-                        System.out.println("Float counts:");
-                        System.out.println("NaN count: " + nanCount);
-                        System.out.println("non-zero count: " + nonZeroCount);
-                        System.out.println("zero count: " + zeroCount);
-                        System.out.println("unknown count: " + unknownCount);
-                    } else {
-                        float[][] floats = new float[nBands][];
-                        for (int i = 0; i < nBands; i++) {
-                            floats[i] = new float[pixels];
-                            bands[i].order(ByteOrder.nativeOrder());
-                            bands[i].asFloatBuffer().get(floats[i], 0, pixels);
-                        }
-                        imgBuffer = new DataBufferFloat(floats, pixels);
-                    }
-
-
-                    dataBufferType = DataBuffer.TYPE_FLOAT;
-                } else if (bufferType == gdalconstConstants.GDT_Float64) {
-                    // /////////////////////////////////////////////////////////////////////
-                    //
-                    // TYPE DOUBLE
-                    //
-                    // /////////////////////////////////////////////////////////////////////
-
-                    if (!splitBands) {
-                        // I get double values from the ByteBuffer using a view
-                        // of the ByteBuffer as a DoubleBuffer
-                        // It is worth to create the view outside the loop.
-                        double[] doubles = new double[nBands * pixels];
-                        bands[0].order(ByteOrder.nativeOrder());
-                        final DoubleBuffer buff = bands[0].asDoubleBuffer();
-                        buff.get(doubles, 0, nBands * pixels);
-                        imgBuffer = new DataBufferDouble(doubles, nBands * pixels);
-                    } else {
-                        double[][] doubles = new double[nBands][];
-                        for (int i = 0; i < nBands; i++) {
-                            doubles[i] = new double[pixels];
-                            bands[i].order(ByteOrder.nativeOrder());
-                            bands[i].asDoubleBuffer().get(doubles[i], 0, pixels);
-                        }
-                        imgBuffer = new DataBufferDouble(doubles, pixels);
-                    }
-                    dataBufferType = DataBuffer.TYPE_DOUBLE;
-
-                } else {
-                    // TODO: Handle more cases if needed. Show the name of the type
-                    // instead of the numeric value.
-                    LOGGER.info("The specified data type is actually unsupported: "
-                            + bufferType);
-                }
-            }
-
-            // ////////////////////////////////////////////////////////////////////
-            //
-            // -------------------------------------------------------------------
-            // Raster Creation >>> Step 4: Setting SampleModel
-            // -------------------------------------------------------------------
-            //
-            // ////////////////////////////////////////////////////////////////////
-            // TODO: Fix this in compliance with the specified destSampleModel
-            if (splitBands)
-                sampleModel = new BandedSampleModel(dataBufferType, dstWidth,
-                        dstHeight, dstWidth, banks, offsets);
-            else
-                sampleModel = new PixelInterleavedSampleModel(dataBufferType,
-                        dstWidth, dstHeight, nBands, dstWidth * nBands, offsets);
-        } finally {
-            if (pBand != null){
-                try{
-                    // Closing the band
-                    pBand.delete();
-                }catch (Throwable e) {
-                    if(LOGGER.isLoggable(Level.FINE))
-                        LOGGER.log(Level.FINE,e.getLocalizedMessage(),e);
-                }
-            }
-        }
-
-        // ////////////////////////////////////////////////////////////////////
-        //
-        // -------------------------------------------------------------------
-        // Raster Creation >>> Final Step: Actual Raster Creation
-        // -------------------------------------------------------------------
-        //
-        // ////////////////////////////////////////////////////////////////////
-
-        // return Raster.createWritableRaster(sampleModel, imgBuffer, new Point(
-        // dstRegion.x, dstRegion.y));
-        return Raster.createWritableRaster(sampleModel, imgBuffer, null);
-    }
 
     /**
      * Creates a {@link GridCoverage} for the provided {@link PlanarImage} using the {@link
@@ -1394,9 +959,46 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
      * @param image contains the data for the coverage to create.
      * @return a {@link GridCoverage}
      * @throws IOException
-     */
+
     protected GridCoverage createCoverageFromImage(PlanarImage image) throws IOException {
         return createCoverageFromImage(image, null);
     }
+*/
+    /**
+     * Setting Envelope, GridRange and CRS from the given {@code ImageReader}
+     *
+     * @param reader the {@code ImageReader} from which to retrieve metadata (if available) for
+     *     setting properties
+     * @throws IOException
+     */
+    protected void setCoverageProperties(ImageReader reader) throws IOException {
+        // //
+        //
+        // Getting common metadata from GDAL
+        //
+        // //
+        final IIOMetadata metadata = reader.getImageMetadata(0);
+        if (!(metadata instanceof GDALCommonIIOImageMetadata)) {
+            throw new DataSourceException(
+                    "Unexpected error! Metadata should be an instance of the expected class: GDALCommonIIOImageMetadata.");
+        }
+        parseCommonMetadata((GDALCommonIIOImageMetadata) metadata);
 
+        // //
+        //
+        // Envelope and CRS checks
+        //
+        // //
+        if (this.crs == null) {
+            LOGGER.info("crs not found, proceeding with default crs");
+            this.crs = AbstractGridFormat.getDefaultCRS();
+        }
+
+        if (this.originalEnvelope == null) {
+            throw new DataSourceException("Unable to compute the envelope for this coverage");
+        }
+
+        // setting the coordinate reference system for the envelope, just to make sure we set it
+        this.originalEnvelope.setCoordinateReferenceSystem(this.crs);
+    }
 }
