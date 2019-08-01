@@ -4,6 +4,7 @@ import org.geotools.coverage.grid.GridGeometry2D;
 import org.geotools.coverage.grid.io.*;
 import org.geotools.coverage.grid.io.footprint.FootprintBehavior;
 import org.geotools.coverage.grid.io.imageio.GeoToolsWriteParams;
+import org.geotools.data.DataSourceException;
 import org.geotools.parameter.DefaultParameterDescriptor;
 import org.geotools.parameter.DefaultParameterDescriptorGroup;
 import org.geotools.parameter.ParameterGroup;
@@ -23,6 +24,7 @@ import org.opengis.util.ProgressListener;
 import javax.media.jai.Interpolation;
 import javax.media.jai.InterpolationNearest;
 import java.awt.*;
+import java.net.URL;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +33,7 @@ import java.util.Map;
  * @author joshfix
  * Created on 2019-07-31
  */
-public class GdalVfsFormat implements Format {
+public class GdalVfsFormat extends AbstractGridFormat {
 
     /**
      * The Map object is used by the information methods(such as getName()) as a data source. The
@@ -213,7 +215,7 @@ public class GdalVfsFormat implements Format {
                                 READ_GRIDGEOMETRY2D,
                                 INPUT_TRANSPARENT_COLOR,
                                 SUGGESTED_TILE_SIZE}));
-
+/*
         // writing parameters
         writeParameters = new ParameterGroup(
                 new DefaultParameterDescriptorGroup(
@@ -221,6 +223,7 @@ public class GdalVfsFormat implements Format {
                         new GeneralParameterDescriptor[] {
                                 AbstractGridFormat.GEOTOOLS_WRITE_PARAMS,
                                 AbstractGridFormat.PROGRESS_LISTENER }));
+                                */
     }
 
     /** @see org.opengis.coverage.grid.Format#getName() */
@@ -258,7 +261,7 @@ public class GdalVfsFormat implements Format {
      * @param source The source object to parse.
      * @return A reader for this {@link Format} or null.
      */
-    public GridCoverage2DReader getReader(Object source) {
+    public AbstractGridCoverage2DReader getReader(Object source) {
         return getReader(source, null);
     }
 
@@ -273,11 +276,26 @@ public class GdalVfsFormat implements Format {
      * @param hints The {@link Hints} to use when trying to instantiate this reader.
      * @return A reader for this {@link Format} or null.
      */
-    public GridCoverage2DReader getReader(Object source, Hints hints) {
-        if (!(source instanceof VfsPath)) {
-            throw new UnsupportedOperationException("Source object must be VfsPath.");
+    public AbstractGridCoverage2DReader getReader(Object source, Hints hints)  {
+        // TODO: need to handle Azure WASB URL strings, S3 URL strings, http URL strings, etc
+        try {
+            if (source instanceof URL) {
+                source = source.toString();
+            }
+            if (source instanceof String) {
+                String url = (String) source;
+                url = url.replace("wasb://destination@imageryproducts.blob.core.windows.net/", "/vsiaz/destination/");
+                return new GdalVfsReader(new VfsPath(url));
+            }
+            if (source instanceof VfsPath) {
+                return new GdalVfsReader((VfsPath) source);
+            }
+        } catch (Exception e) {
+            final RuntimeException re = new RuntimeException();
+            re.initCause(e);
+            throw re;
         }
-        return new GdalVfsReader((VfsPath)source);
+        throw new UnsupportedOperationException("Source object must be VfsPath.");
     }
 
     /**
@@ -355,8 +373,15 @@ public class GdalVfsFormat implements Format {
         return crs;
     }
 
+    @Override
+    public GeoToolsWriteParams getDefaultImageIOWriteParameters() {
+        return null;
+    }
 
-
+    @Override
+    public GridCoverageWriter getWriter(Object destination, Hints hints) {
+        return null;
+    }
 
 
 }

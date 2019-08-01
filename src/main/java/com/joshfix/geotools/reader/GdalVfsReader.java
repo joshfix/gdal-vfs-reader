@@ -1,5 +1,6 @@
 package com.joshfix.geotools.reader;
 
+import com.joshfix.imageio.GdalVfsImageReaderSpi;
 import it.geosolutions.imageio.gdalframework.GDALCommonIIOImageMetadata;
 import it.geosolutions.imageio.gdalframework.GDALUtilities;
 import it.geosolutions.imageio.maskband.DatasetLayout;
@@ -18,6 +19,7 @@ import org.geotools.coverage.grid.io.AbstractGridCoverage2DReader;
 import org.geotools.coverage.grid.io.GridCoverage2DReader;
 import org.geotools.coverage.grid.io.OverviewPolicy;
 import org.geotools.coverage.util.CoverageUtilities;
+import org.geotools.coverageio.gdal.BaseGDALGridCoverage2DReader;
 import org.geotools.data.*;
 import org.geotools.geometry.GeneralEnvelope;
 import org.geotools.geometry.PixelTranslation;
@@ -41,6 +43,7 @@ import org.opengis.referencing.operation.MathTransform;
 import org.opengis.referencing.operation.TransformException;
 
 import javax.imageio.ImageReader;
+import javax.imageio.spi.ImageReaderSpi;
 import javax.media.jai.ImageLayout;
 import javax.media.jai.PlanarImage;
 import java.awt.*;
@@ -58,7 +61,7 @@ import java.util.logging.Logger;
  * @author joshfix
  * Created on 2019-07-29
  */
-public class GdalVfsReader implements GridCoverage2DReader {
+public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridCoverage2DReader {//AbstractGridCoverage2DReader {//implements GridCoverage2DReader {
 
     private VfsPath vfsPath;
     private Dataset dataset;
@@ -121,6 +124,11 @@ public class GdalVfsReader implements GridCoverage2DReader {
     /** Coverage {@link DatasetLayout} containing information about Overviews and Mask management */
     protected DatasetLayout dtLayout;
 
+    private static final String worldFileExt = "";
+
+    /** Caches an {@code ImageReaderSpi}. */
+    private ImageReaderSpi readerSPI;
+
     private static final Logger LOGGER =
             org.geotools.util.logging.Logging.getLogger(GdalVfsReader.class);
 
@@ -134,8 +142,20 @@ public class GdalVfsReader implements GridCoverage2DReader {
         gdal.SetConfigOption("CPL_CURL_VERBOSE", "YES");
         gdal.SetConfigOption("GDAL_PAM_ENABLED", "NO");
     }
+/*
+    public GdalVfsReader(VfsPath vfsPath) throws DataSourceException {
+        this(vfsPath, null);
+    }*/
 
-    public GdalVfsReader(VfsPath vfsPath) {
+
+    public GdalVfsReader(VfsPath vfsPath) throws DataSourceException {
+
+        //    super(vfsPath, hints, worldFileExt, null);
+
+
+
+        readerSPI = new GdalVfsImageReaderSpi();
+        //super(vfsPath, hints, worldFileExt, new GdalVfsImageReaderSpi());
         // GridCoverageFactory initialization
         if (this.hints.containsKey(Hints.GRID_COVERAGE_FACTORY)) {
             final Object factory = this.hints.get(Hints.GRID_COVERAGE_FACTORY);
@@ -498,16 +518,16 @@ public class GdalVfsReader implements GridCoverage2DReader {
 
     @Override
     public Format getFormat() {
-        return null;
+        return new GdalVfsFormat();
     }
-
+/*
     @Override
     public Object getSource() {
         return source;
     }
-
+*/
     @Override
-    public String[] getMetadataNames() throws IOException {
+    public String[] getMetadataNames() {
         if (!checkName(coverageName)) {
             throw new IllegalArgumentException(
                     "The specified coverageName " + coverageName + "is not supported");
@@ -516,47 +536,48 @@ public class GdalVfsReader implements GridCoverage2DReader {
     }
 
     @Override
-    public String[] getMetadataNames(String coverageName) throws IOException {
+    public String[] getMetadataNames(String coverageName) {
         return new String[0];
     }
 
     @Override
-    public String getMetadataValue(String name) throws IOException {
+    public String getMetadataValue(String name) {
         return null;
     }
 
     @Override
-    public String getMetadataValue(String coverageName, String name) throws IOException {
+    public String getMetadataValue(String coverageName, String name) {
         return null;
     }
 
     @Override
-    public String[] listSubNames() throws IOException {
+    public String[] listSubNames() {
         return new String[0];
     }
 
     @Override
-    public String[] getGridCoverageNames() throws IOException {
+    public String[] getGridCoverageNames() {
         return new String[]{coverageName};
     }
 
     @Override
-    public int getGridCoverageCount() throws IOException {
+    public int getGridCoverageCount() {
         return 1;
     }
 
     @Override
-    public String getCurrentSubname() throws IOException {
+    public String getCurrentSubname()  {
         return null;
     }
 
     @Override
-    public boolean hasMoreGridCoverages() throws IOException {
+    public boolean hasMoreGridCoverages() {
         return false;
     }
 
     @Override
     public GridCoverage2D read(GeneralParameterValue[] parameters) throws IOException {
+        System.out.println("!!!!!!!!! GdalVfsReader read() called !!!!!!!!!!!!");
         GridGeometry2D gridGeometry2D = null;
 
         for (GeneralParameterValue parameter : parameters) {
@@ -627,12 +648,12 @@ public class GdalVfsReader implements GridCoverage2DReader {
     }
 
     @Override
-    public void skip() throws IOException {
+    public void skip() {
 
     }
 
     @Override
-    public void dispose() throws IOException {
+    public void dispose() {
 
     }
 
@@ -706,6 +727,10 @@ public class GdalVfsReader implements GridCoverage2DReader {
     @Override
     public ImageLayout getImageLayout() throws IOException {
         return null;
+    }
+
+    public String getCoverageName() {
+        return coverageName;
     }
 
     @Override
