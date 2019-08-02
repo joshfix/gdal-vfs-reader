@@ -1,8 +1,8 @@
-package com.joshfix.imageio;
+package com.joshfix.gdalvfs.imageio;
 
-import com.joshfix.geotools.reader.GdalVfsImageInputStream;
-import com.joshfix.geotools.reader.GdalVfsReader;
-import com.joshfix.geotools.reader.VfsPath;
+import com.joshfix.gdalvfs.geotools.GdalVfsImageInputStream;
+import com.joshfix.gdalvfs.geotools.GdalVfsReader;
+import com.joshfix.gdalvfs.geotools.path.VfsPath;
 import com.sun.media.imageioimpl.common.PackageUtil;
 import it.geosolutions.imageio.gdalframework.GDALImageReaderSpi;
 import it.geosolutions.imageio.utilities.ImageIOUtilities;
@@ -63,7 +63,7 @@ public class GdalVfsImageReaderSpi extends GDALImageReaderSpi {
 
     static final String[] extraImageMetadataFormatClassNames = { null };
 
-    static final String readerCN = "com.joshfix.imageio.GdalVfsImageReader";
+    static final String readerCN = "com.joshfix.gdalvfs.imageio.GdalVfsImageReader";
 
     private boolean registered = false;
 

@@ -1,4 +1,6 @@
-package com.joshfix.geotools.reader;
+package com.joshfix.gdalvfs.geotools;
+
+import com.joshfix.gdalvfs.geotools.path.VfsPath;
 
 import javax.imageio.stream.ImageInputStreamImpl;
 import java.io.IOException;

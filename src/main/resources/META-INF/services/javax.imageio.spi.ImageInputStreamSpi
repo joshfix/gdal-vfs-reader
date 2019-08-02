@@ -1,1 +1,1 @@
-com.joshfix.geotools.reader.GdalVfsImageInputStreamSpi
+com.joshfix.gdalvfs.geotools.GdalVfsImageInputStreamSpi

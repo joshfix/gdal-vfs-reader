@@ -1,9 +1,7 @@
-package com.joshfix.imageio;
+package com.joshfix.gdalvfs.imageio;
 
-import com.joshfix.geotools.reader.GdalVfsImageInputStream;
-import com.joshfix.geotools.reader.VfsPath;
-import it.geosolutions.imageio.core.CoreCommonIIOStreamMetadata;
-import it.geosolutions.imageio.core.GCP;
+import com.joshfix.gdalvfs.geotools.GdalVfsImageInputStream;
+import com.joshfix.gdalvfs.geotools.path.VfsPath;
 import it.geosolutions.imageio.gdalframework.GDALCommonIIOImageMetadata;
 import it.geosolutions.imageio.gdalframework.GDALImageReader;
 import it.geosolutions.imageio.gdalframework.GDALImageReaderSpi;
@@ -16,18 +14,12 @@ import org.gdal.gdalconst.gdalconst;
 import org.gdal.gdalconst.gdalconstConstants;
 
 import javax.imageio.ImageReadParam;
-import javax.imageio.ImageReader;
 import javax.imageio.ImageTypeSpecifier;
-import javax.imageio.metadata.IIOMetadata;
 import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.*;
-import java.io.File;
 import java.io.IOException;
-import java.net.URI;
-import java.net.URL;
 import java.nio.*;
-import java.util.List;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -164,24 +156,13 @@ public class GdalVfsImageReader extends GDALImageReader {
             imageInputStream = (GdalVfsImageInputStream)input;
             this.input = input;
         }
-        /*
-        if (input instanceof VfsPath) {
-            vfsPath = (VfsPath) input;
-        } else if (input instanceof URL || input instanceof URI) {
-            url = input.toString();
-        } else if (input instanceof String) {
-            url = (String) input;
-        }
-*/
+
         if (vfsPath == null && url == null) {
             throw new IllegalArgumentException("Input not supported.");
         }
 
         if (vfsPath == null) {
-            if (url.startsWith("wasb")) {
-                url = url.replace("wasb://destination@imageryproducts.blob.core.windows.net/", "/vsiaz/destination/");
-                vfsPath = new VfsPath(url);
-            }
+            vfsPath = new VfsPath(url);
         }
 
         // is gdal available
@@ -531,55 +512,14 @@ public class GdalVfsImageReader extends GDALImageReader {
                     // /////////////////////////////////////////////////////////////////////
 
                     if (!splitBands) {
-                        int length = byteBands[0].length;
                         // I get float values from the ByteBuffer using a view
                         // of the ByteBuffer as a FloatBuffer
                         // It is worth to create the view outside the loop.
                         float[] floats = new float[nBands * pixels];
                         bands[0].order(ByteOrder.nativeOrder());
-                        //bands[0].order(ByteOrder.LITTLE_ENDIAN);
-                        //bands[0].order(ByteOrder.BIG_ENDIAN);
                         final FloatBuffer buff = bands[0].asFloatBuffer();
-/*
-                        byte[] bytes = bands[0].array();
-                        for (int i = 0; i + 4 < bytes.length; i = i + 4) {
-
-                            int asInt = (bytes[i] & 0xFF)
-                                    | ((bytes[i + 1] & 0xFF) << 8)
-                                    | ((bytes[i + 2] & 0xFF) << 16)
-                                    | ((bytes[i + 3] & 0xFF) << 24);
-                            float asFloat = Float.intBitsToFloat(asInt);
-                            floats[i] = asFloat;
-                        }
-                        imgBuffer = new DataBufferFloat(floats, nBands * pixels);
-*/
-
-
                         buff.get(floats, 0, nBands * pixels);
                         imgBuffer = new DataBufferFloat(floats, nBands * pixels);
-                        System.out.println("float array length: " + floats.length);
-
-                        int nanCount = 0;
-                        int nonZeroCount = 0;
-                        int zeroCount = 0;
-                        int unknownCount = 0;
-                        for (int i = 0; i < floats.length; i++) {
-                            if (Float.isNaN(floats[i])) {
-                                nanCount++;
-                            } else if (floats[i] != 0) {
-                                nonZeroCount++;
-                            } else if (floats[i] == 0) {
-                                zeroCount++;
-                            } else {
-                                unknownCount++;
-                            }
-                        }
-
-                        System.out.println("Float counts:");
-                        System.out.println("NaN count: " + nanCount);
-                        System.out.println("non-zero count: " + nonZeroCount);
-                        System.out.println("zero count: " + zeroCount);
-                        System.out.println("unknown count: " + unknownCount);
                     } else {
                         float[][] floats = new float[nBands][];
                         for (int i = 0; i < nBands; i++) {
@@ -686,7 +626,7 @@ public class GdalVfsImageReader extends GDALImageReader {
      *                 if an error occurs when acquiring access to the
      *                 underlying datasource
      */
-    public BufferedImage read(final int imageIndex,final  ImageReadParam param)throws IOException {
+    public BufferedImage read(final int imageIndex, final ImageReadParam param) throws IOException {
 
         // //
         //
@@ -836,5 +776,41 @@ public class GdalVfsImageReader extends GDALImageReader {
             LOGGER.fine("read(imageIndex)");
         return read(imageIndex, null);
 
+    }
+
+    /**
+     * Checks if the specified ImageIndex is valid.
+     *
+     * @param imageIndex
+     *                the specified imageIndex
+     */
+    protected void checkImageIndex(final int imageIndex) {
+
+        // When is an imageIndex not valid? 1) When it is negative 2) When the
+        // format does not support subdatasets and imageIndex is > 0 3) When the
+        // format supports subdatasets, but there isn't any subdataset and
+        // imageIndex is greater than zero. 4) When the format supports
+        // subdatasets, there are N subdatasets but imageIndex exceeds the
+        // subdatasets count.
+        //
+        // It is worthwhile to remark that in case of nSubdatasets > 0, the
+        // mainDataset is stored in the last position of datasetNames array. In
+        // such a case the max valid imageIndex is nSubdatasets.
+
+        if (imageIndex < 0 || imageIndex > nSubdatasets) {
+            // The specified imageIndex is not valid.
+            // Retrieving the valid image index range.
+            final int maxImageIndex = nSubdatasets;
+            final StringBuilder sb = new StringBuilder("Illegal imageIndex specified = ")
+                    .append(imageIndex)
+                    .append(", while the valid imageIndex");
+            if (maxImageIndex > 0)
+                // There are N Subdatasets.
+                sb.append(" range should be (0,").append(maxImageIndex).append( ")!!");
+            else
+                // Only the imageIndex 0 is valid.
+                sb.append(" should be 0!");
+            throw new IndexOutOfBoundsException(sb.toString());
+        }
     }
 }

@@ -1,19 +1,18 @@
-package com.joshfix.geotools.reader;
+package com.joshfix.gdalvfs.geotools;
 
-import com.joshfix.imageio.GdalVfsImageReaderSpi;
+import com.joshfix.gdalvfs.geotools.path.VfsPath;
+import com.joshfix.gdalvfs.imageio.GdalVfsImageReaderSpi;
 import it.geosolutions.imageio.gdalframework.GDALCommonIIOImageMetadata;
 import it.geosolutions.imageio.gdalframework.GDALUtilities;
 import it.geosolutions.imageio.maskband.DatasetLayout;
 import org.gdal.gdal.Dataset;
 import org.gdal.gdal.gdal;
-import org.gdal.gdalconst.gdalconstConstants;
 import org.geotools.coverage.CoverageFactoryFinder;
 import org.geotools.coverage.GridSampleDimension;
 import org.geotools.coverage.TypeMap;
 import org.geotools.coverage.grid.GridCoverage2D;
 import org.geotools.coverage.grid.GridCoverageFactory;
 import org.geotools.coverage.grid.GridEnvelope2D;
-import org.geotools.coverage.grid.GridGeometry2D;
 import org.geotools.coverage.grid.io.AbstractGridCoverage2DReader;
 import org.geotools.coverage.grid.io.AbstractGridFormat;
 import org.geotools.coverage.grid.io.GridCoverage2DReader;
@@ -63,8 +62,6 @@ import java.util.logging.Logger;
 public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridCoverage2DReader {//AbstractGridCoverage2DReader {//implements GridCoverage2DReader {
 
     private VfsPath vfsPath;
-    //private Dataset dataset;
-    private ConcurrentHashMap<String, GDALCommonIIOImageMetadata> datasetMetadataMap = new ConcurrentHashMap<>();
 
     /**The coverage factory producing a {@link GridCoverage} from an image */
     private GridCoverageFactory coverageFactory;
@@ -102,16 +99,6 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     /** crs for this coverage */
     protected CoordinateReferenceSystem crs = null;
 
-    //private ConcurrentHashMap<String, Dataset> datasetsMap = new ConcurrentHashMap<>();
-
-    /** number of subdatasets */
-    private int subDatasetSize = -1;
-
-    /**
-     * list of childs subdatasets names (if any) contained into the source
-     */
-    //private String[] datasetNames;
-
     private Map<String, ArrayList<Resolution>> resolutionsLevelsMap = new HashMap<>();
 
     /** Resolutions avialaible through an overviews based mechanism. */
@@ -134,7 +121,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         // config options per https://trac.osgeo.org/gdal/wiki/CloudOptimizedGeoTIFF#HowtoreaditwithGDAL
         gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES");
         gdal.SetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif");
-        gdal.SetConfigOption("CPL_CURL_VERBOSE", "YES");
+        //gdal.SetConfigOption("CPL_CURL_VERBOSE", "YES");
         gdal.SetConfigOption("GDAL_PAM_ENABLED", "NO");
     }
 
@@ -144,8 +131,6 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
 
     public GdalVfsReader(VfsPath vfsPath, Hints hints) throws DataSourceException {
         super(vfsPath, null);
-
-
 
         imageReaderSpi = new GdalVfsImageReaderSpi();
         try {
@@ -177,52 +162,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
             e.printStackTrace();
         }
     }
-/*
-    protected void populateMetadata() {
-        dataset = GDALUtilities.acquireDataSet(vfsPath.getPath(), gdalconstConstants.GA_ReadOnly);
-        LOGGER.info(new StringBuilder("Opened dataset... last error: ").append(
-                gdal.GetLastErrorMsg()).toString());
-        if (dataset == null) {
-            throw new RuntimeException("Unable to acquire dataset for path " + vfsPath.getPath() + ". Reason: "
-                    +  gdal.GetLastErrorMsg());
-        }
-        System.out.println("Dataset Y size: " + dataset.getRasterYSize());
-        System.out.println("Dataset X size: " + dataset.getRasterXSize());
 
-        datasetsMap.put(vfsPath.getPath(), dataset);
-
-        final java.util.List<String> subdatasets = dataset.GetMetadata_List(GDALUtilities.GDALMetadataDomain.SUBDATASETS);
-
-        subDatasetSize = subdatasets.size() / 2;
-
-        // Some formats supporting subdatasets may have no subdatasets.
-        // As an instance, the HDF4ImageReader may read HDF4Images
-        // which are single datasets containing no subdatasets.
-        // Thus, theDataset is simply the main dataset.
-        if (subDatasetSize == 0) {
-            subDatasetSize = 1;
-            datasetNames = new String[1];
-            datasetNames[0] = vfsPath.getPath();
-            GDALCommonIIOImageMetadata metadata = createDatasetMetadata(vfsPath.getPath());
-            //GDALCommonIIOImageMetadata metadata = createDatasetMetadata(dataset, vfsPath.getPath());
-            datasetMetadataMap.put(datasetNames[0], metadata);
-            parseCommonMetadata(metadata);
-        } else {
-            datasetNames = new String[subDatasetSize + 1];
-            for (int i = 0; i < subDatasetSize; i++) {
-                final String subdatasetName = (subdatasets.get(i * 2));
-                final int nameStartAt = subdatasetName.lastIndexOf("_NAME=") + 6;
-                datasetNames[i] = subdatasetName.substring(nameStartAt);
-            }
-            datasetNames[subDatasetSize] = vfsPath.getPath();
-            GDALCommonIIOImageMetadata metadata = createDatasetMetadata(dataset, datasetNames[subDatasetSize]);
-            datasetMetadataMap.put(
-                    datasetNames[subDatasetSize],
-                    metadata);
-            parseCommonMetadata(metadata);
-        }
-    }
-*/
     /**
      * Gets resolution information about the coverage itself.
      *
@@ -570,35 +510,10 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
 
     @Override
     public GridCoverage2D read(GeneralParameterValue[] parameters) throws IOException {
-        System.out.println("!!!!!!!!! GdalVfsReader read() called !!!!!!!!!!!!");
-        GridGeometry2D gridGeometry2D = null;
-
-        for (GeneralParameterValue parameter : parameters) {
-            if (!(((org.geotools.parameter.Parameter)parameter).getValue() instanceof GridGeometry2D)) {
-                continue;
-            }
-            gridGeometry2D = (GridGeometry2D)((org.geotools.parameter.Parameter)parameter).getValue();
-        }
-
-        if (gridGeometry2D == null) {
-            throw new IOException("COG support requires the READ_GRIDGEOMETRY2D parameter.");
-        }
-
-        GridEnvelope2D gridEnvelope2D = gridGeometry2D.getGridRange2D();
-        int minX = Math.min(gridEnvelope2D.getLow().x, originalGridRange.getLow().getCoordinateValues()[0]);
-        int minY = Math.min(gridEnvelope2D.getLow().y, originalGridRange.getLow().getCoordinateValues()[1]);
-        int maxX = Math.min(gridEnvelope2D.getHigh().x, originalGridRange.getHigh().getCoordinateValues()[0]);
-        int maxY = Math.min(gridEnvelope2D.getHigh().y, originalGridRange.getHigh().getCoordinateValues()[1]);
-
-        System.out.println("minX: " + minX);
-        System.out.println("minY: " + minY);
-        System.out.println("maxX: " + maxX);
-        System.out.println("maxY: " + maxY);
-
         // TODO - how do you get the image index??
         BufferedImage bi  = imageReader.read(0);
-        GridCoverage coverage = createImageCoverage(PlanarImage.wrapRenderedImage(bi));
-        return (GridCoverage2D) coverage;
+
+        return (GridCoverage2D) createImageCoverage(PlanarImage.wrapRenderedImage(bi));
     }
 
     @Override
@@ -619,7 +534,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
 
     @Override
     public void dispose() {
-
+        imageReader.dispose();
     }
 
     @Override

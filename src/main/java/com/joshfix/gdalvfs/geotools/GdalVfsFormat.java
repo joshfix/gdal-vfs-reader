@@ -1,10 +1,10 @@
-package com.joshfix.geotools.reader;
+package com.joshfix.gdalvfs.geotools;
 
+import com.joshfix.gdalvfs.geotools.path.VfsPath;
 import org.geotools.coverage.grid.GridGeometry2D;
 import org.geotools.coverage.grid.io.*;
 import org.geotools.coverage.grid.io.footprint.FootprintBehavior;
 import org.geotools.coverage.grid.io.imageio.GeoToolsWriteParams;
-import org.geotools.data.DataSourceException;
 import org.geotools.parameter.DefaultParameterDescriptor;
 import org.geotools.parameter.DefaultParameterDescriptorGroup;
 import org.geotools.parameter.ParameterGroup;
@@ -283,9 +283,9 @@ public class GdalVfsFormat extends AbstractGridFormat {
                 source = source.toString();
             }
             if (source instanceof String) {
-                String url = (String) source;
-                url = url.replace("wasb://destination@imageryproducts.blob.core.windows.net/", "/vsiaz/destination/");
-                return new GdalVfsReader(new VfsPath(url));
+                String urlString = (String) source;
+
+                return new GdalVfsReader(new VfsPath(urlString));
             }
             if (source instanceof VfsPath) {
                 return new GdalVfsReader((VfsPath) source);
