@@ -198,6 +198,21 @@ public class GdalVfsFormat extends AbstractGridFormat {
                     FootprintBehavior.valuesAsStrings(),
                     FootprintBehavior.None.name());
 
+    /** Default value of the rescaling behavior, in case it's not specified */
+    private static boolean RESCALE_DEFAULT =
+            Boolean.valueOf(System.getProperty("org.geotools.coverage.io.rescale", "true"));
+
+    /**
+     * This {@code GeneralParameterValue} can be provided to the {@link GridCoverageReader}s through
+     * the {@link GridCoverageReader#read(GeneralParameterValue[])} method in order to specify the
+     * whether eventual value rescaling should be performed, or the original pixel value preserved
+     */
+    public static final DefaultParameterDescriptor<Boolean> RESCALE_PIXELS =
+            new DefaultParameterDescriptor<>(
+                    "RescalePixels",
+                    Boolean.class,
+                    new Boolean[] {Boolean.TRUE, Boolean.FALSE},
+                    RESCALE_DEFAULT);
 
     public GdalVfsFormat() {
         writeParameters = null;
@@ -277,15 +292,12 @@ public class GdalVfsFormat extends AbstractGridFormat {
      * @return A reader for this {@link Format} or null.
      */
     public AbstractGridCoverage2DReader getReader(Object source, Hints hints)  {
-        // TODO: need to handle Azure WASB URL strings, S3 URL strings, http URL strings, etc
         try {
             if (source instanceof URL) {
                 source = source.toString();
             }
             if (source instanceof String) {
-                String urlString = (String) source;
-
-                return new GdalVfsReader(new VfsPath(urlString));
+                return new GdalVfsReader(new VfsPath((String)source));
             }
             if (source instanceof VfsPath) {
                 return new GdalVfsReader((VfsPath) source);

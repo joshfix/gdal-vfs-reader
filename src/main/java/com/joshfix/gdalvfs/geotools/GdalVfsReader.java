@@ -2,9 +2,15 @@ package com.joshfix.gdalvfs.geotools;
 
 import com.joshfix.gdalvfs.geotools.path.VfsPath;
 import com.joshfix.gdalvfs.imageio.GdalVfsImageReaderSpi;
+import com.sun.media.imageioimpl.common.BogusColorSpace;
+import it.geosolutions.imageio.core.CoreCommonImageMetadata;
 import it.geosolutions.imageio.gdalframework.GDALCommonIIOImageMetadata;
 import it.geosolutions.imageio.gdalframework.GDALUtilities;
 import it.geosolutions.imageio.maskband.DatasetLayout;
+import it.geosolutions.imageioimpl.plugins.tiff.TIFFStreamMetadata;
+import it.geosolutions.imageioimpl.plugins.tiff.TiffDatasetLayoutImpl;
+import it.geosolutions.jaiext.range.NoDataContainer;
+import it.geosolutions.jaiext.utilities.ImageLayout2;
 import org.gdal.gdal.Dataset;
 import org.gdal.gdal.gdal;
 import org.geotools.coverage.CoverageFactoryFinder;
@@ -13,41 +19,55 @@ import org.geotools.coverage.TypeMap;
 import org.geotools.coverage.grid.GridCoverage2D;
 import org.geotools.coverage.grid.GridCoverageFactory;
 import org.geotools.coverage.grid.GridEnvelope2D;
+import org.geotools.coverage.grid.GridGeometry2D;
 import org.geotools.coverage.grid.io.AbstractGridCoverage2DReader;
 import org.geotools.coverage.grid.io.AbstractGridFormat;
 import org.geotools.coverage.grid.io.GridCoverage2DReader;
 import org.geotools.coverage.grid.io.OverviewPolicy;
+import org.geotools.coverage.grid.io.imageio.MaskOverviewProvider;
+import org.geotools.coverage.grid.io.imageio.geotiff.GeoTiffIIOMetadataDecoder;
+import org.geotools.coverage.grid.io.imageio.geotiff.GeoTiffMetadata2CRSAdapter;
 import org.geotools.coverage.util.CoverageUtilities;
 import org.geotools.data.*;
 import org.geotools.geometry.GeneralEnvelope;
 import org.geotools.geometry.PixelTranslation;
+import org.geotools.image.ImageWorker;
+import org.geotools.image.util.ImageUtilities;
 import org.geotools.referencing.CRS;
 import org.geotools.referencing.operation.builder.GridToEnvelopeMapper;
 import org.geotools.referencing.operation.transform.IdentityTransform;
 import org.geotools.referencing.operation.transform.ProjectiveTransform;
+import org.geotools.util.URLs;
 import org.geotools.util.Utilities;
 import org.geotools.util.factory.GeoTools;
 import org.geotools.util.factory.Hints;
+
 import org.opengis.coverage.ColorInterpretation;
 import org.opengis.coverage.grid.Format;
 import org.opengis.coverage.grid.GridCoverage;
 import org.opengis.coverage.grid.GridEnvelope;
+import org.opengis.geometry.Envelope;
 import org.opengis.parameter.GeneralParameterValue;
 import org.opengis.parameter.ParameterDescriptor;
+import org.opengis.parameter.ParameterValue;
 import org.opengis.referencing.FactoryException;
+import org.opengis.referencing.ReferenceIdentifier;
 import org.opengis.referencing.crs.CoordinateReferenceSystem;
 import org.opengis.referencing.datum.PixelInCell;
 import org.opengis.referencing.operation.MathTransform;
 import org.opengis.referencing.operation.TransformException;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
 import javax.imageio.ImageReader;
+import javax.imageio.ImageTypeSpecifier;
 import javax.imageio.metadata.IIOMetadata;
 import javax.imageio.spi.ImageReaderSpi;
-import javax.media.jai.ImageLayout;
-import javax.media.jai.PlanarImage;
+import javax.media.jai.*;
 import java.awt.*;
 import java.awt.geom.AffineTransform;
 import java.awt.image.*;
+import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.List;
@@ -64,48 +84,66 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     private VfsPath vfsPath;
 
     /**The coverage factory producing a {@link GridCoverage} from an image */
-    private GridCoverageFactory coverageFactory;
+    //private GridCoverageFactory coverageFactory;
 
     /** This contains the number of overviews.aaa */
-    protected int numOverviews = 0;
+    //protected int numOverviews = 0;
 
     /** 2DGridToWorld math transform. */
-    protected MathTransform raster2Model = null;
+    //protected MathTransform raster2Model = null;
 
     /** Envelope read from file */
-    protected GeneralEnvelope originalEnvelope = null;
+    //protected GeneralEnvelope originalEnvelope = null;
 
     /** Coverage name */
-    protected String coverageName = "geotools_coverage";
+    //protected String coverageName = "geotools_coverage";
 
     /** Source to read from */
-    protected Object source = null;
+    //protected Object source = null;
 
     /** Hints used by the {@link AbstractGridCoverage2DReader} subclasses. */
-    protected Hints hints = GeoTools.getDefaultHints();
+    //protected Hints hints = GeoTools.getDefaultHints();
 
     /** Highest resolution available for this reader. */
-    protected double[] highestRes = null;
+    //protected double[] highestRes = null;
 
     /** Temp variable used in many readers. */
-    protected boolean closeMe;
+    //protected boolean closeMe;
 
     /** In case we are trying to read from a GZipped file this will be set to true. */
-    protected boolean gzipped;
+    //protected boolean gzipped;
 
     /** The original {@link GridEnvelope} for the {@link GridCoverage2D} of this reader. */
-    protected GridEnvelope originalGridRange = null;
+    //protected GridEnvelope originalGridRange = null;
 
     /** crs for this coverage */
-    protected CoordinateReferenceSystem crs = null;
+    //protected CoordinateReferenceSystem crs = null;
 
-    private Map<String, ArrayList<Resolution>> resolutionsLevelsMap = new HashMap<>();
+    /** scales and offsets for rescaling */
+    protected Double[] scales;
 
-    /** Resolutions avialaible through an overviews based mechanism. */
-    protected double[][] overViewResolutions = null;
+    protected Double[] offsets;
 
-    /** Coverage {@link DatasetLayout} containing information about Overviews and Mask management */
-    protected DatasetLayout dtLayout;
+    protected ImageLayout2 layout;
+
+    protected Map<String, ArrayList<Resolution>> resolutionsLevelsMap = new HashMap<>();
+
+    ///** Resolutions avialaible through an overviews based mechanism. */
+    //protected double[][] overViewResolutions = null;
+
+    ///** Coverage {@link DatasetLayout} containing information about Overviews and Mask management */
+    //protected DatasetLayout dtLayout;
+
+    protected double noData = Double.NaN;
+
+    /** Boolean indicating if {@link MaskOverviewProvider} is present */
+    private boolean hasMaskOvrProvider = false;
+
+    /** {@link MaskOverviewProvider} instance used for handling internal/external Overviews */
+    private MaskOverviewProvider maskOvrProvider;
+
+    /** Adapter for the GeoTiff crs. */
+    private GeoTiffMetadata2CRSAdapter gtcs;
 
     /** Caches an {@code ImageReaderSpi}. */
     protected ImageReaderSpi imageReaderSpi;
@@ -121,7 +159,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         // config options per https://trac.osgeo.org/gdal/wiki/CloudOptimizedGeoTIFF#HowtoreaditwithGDAL
         gdal.SetConfigOption("GDAL_DISABLE_READDIR_ON_OPEN", "YES");
         gdal.SetConfigOption("CPL_VSIL_CURL_ALLOWED_EXTENSIONS", ".tif");
-        //gdal.SetConfigOption("CPL_CURL_VERBOSE", "YES");
+        gdal.SetConfigOption("CPL_CURL_VERBOSE", "YES");
         gdal.SetConfigOption("GDAL_PAM_ENABLED", "NO");
     }
 
@@ -156,11 +194,33 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         try {
             setCoverageProperties(imageReader);
             getResolutionInfo();
+            setLayout(imageReader);
         } catch (IOException e) {
             e.printStackTrace();
         } catch (TransformException e) {
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Extract the ImageLayout from the provided reader for the first available image.
+     *
+     * @param reader an istance of {@link ImageReader}
+     * @throws IOException in case an error occurs
+     */
+    @Override
+    protected void setLayout(ImageReader reader) throws IOException {
+        Utilities.ensureNonNull("reader", reader);
+        // save ImageLayout
+        layout = new ImageLayout2();
+        ImageTypeSpecifier its = reader.getImageTypes(0).next();
+        layout.setColorModel(its.getColorModel()).setSampleModel(its.getSampleModel());
+        layout.setMinX(0).setMinY(0).setWidth(reader.getWidth(0)).setHeight(reader.getHeight(0));
+        layout.setTileGridXOffset(0)
+                .setTileGridYOffset(0)
+                .setTileWidth(reader.getTileWidth(0))
+                .setTileHeight(reader.getTileHeight(0));
+        setlayout(layout);
     }
 
     /**
@@ -188,28 +248,6 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     }
 
     /**
-     * Build a proper {@link GDALCommonIIOImageMetadata} given the name of a
-     * dataset. The default implementation return a
-     * {@link GDALCommonIIOImageMetadata} instance.This method should be
-     * overridden by the specialized {@link it.geosolutions.imageio.gdalframework.GDALImageReader} in case you need to
-     * obtain a specific {@link GDALCommonIIOImageMetadata}'s subclass
-     *
-     * @param datasetName
-     *                the name of the dataset
-     */
-    protected GDALCommonIIOImageMetadata createDatasetMetadata(final String datasetName) {
-        return new GDALCommonIIOImageMetadata(datasetName);
-    }
-
-    /**
-     * Build a proper {@link GDALCommonIIOImageMetadata} given an input dataset
-     * as well as the file name containing such a dataset.
-     */
-    protected GDALCommonIIOImageMetadata createDatasetMetadata(final Dataset mainDataset, String mainDatasetFileName) {
-        return new GDALCommonIIOImageMetadata(mainDataset, mainDatasetFileName, false);
-    }
-
-    /**
      * Taken from BaseGDALGridCoverage2DReader
      *
      * Given a {@link GDALCommonIIOImageMetadata} metadata object, retrieves several properties to
@@ -220,6 +258,8 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
      */
     private void parseCommonMetadata(final GDALCommonIIOImageMetadata metadata) {
 
+        final GeoTiffIIOMetadataDecoder geoTiffMetadata = new GeoTiffIIOMetadataDecoder(metadata);
+        gtcs = new GeoTiffMetadata2CRSAdapter(hints);
         // ////////////////////////////////////////////////////////////////////
         //
         // setting CRS and Envelope directly from GDAL, if available
@@ -277,6 +317,13 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
                 }
             }
         }
+
+        if (geoTiffMetadata.hasNoData()) {
+            noData = geoTiffMetadata.getNoData();
+        }
+
+        // collect scales and offsets is present
+        collectScaleOffset(metadata);
         // //
         //
         // 2) Grid
@@ -332,6 +379,14 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
                 tempTransform.translate(tr, tr);
                 this.raster2Model = ProjectiveTransform.create(tempTransform);
             }
+        }
+    }
+
+    protected void collectScaleOffset(IIOMetadata iioMetadata) {
+        if (iioMetadata instanceof CoreCommonImageMetadata) {
+            CoreCommonImageMetadata ccm = (CoreCommonImageMetadata) iioMetadata;
+            this.scales = ccm.getScales();
+            this.offsets = ccm.getOffsets();
         }
     }
 
@@ -453,12 +508,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     public Format getFormat() {
         return new GdalVfsFormat();
     }
-/*
-    @Override
-    public Object getSource() {
-        return source;
-    }
-*/
+
     @Override
     public String[] getMetadataNames() {
         if (!checkName(coverageName)) {
@@ -499,21 +549,134 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
     }
 
     @Override
-    public String getCurrentSubname()  {
-        return null;
-    }
+    public GridCoverage2D read(GeneralParameterValue[] params) throws IOException {
+        GeneralEnvelope requestedEnvelope = null;
+        Rectangle dim = null;
+        Color inputTransparentColor = null;
+        OverviewPolicy overviewPolicy = null;
+        int[] suggestedTileSize = null;
+        boolean rescalePixels = GdalVfsFormat.RESCALE_PIXELS.getDefaultValue();
 
-    @Override
-    public boolean hasMoreGridCoverages() {
-        return false;
-    }
 
-    @Override
-    public GridCoverage2D read(GeneralParameterValue[] parameters) throws IOException {
-        // TODO - how do you get the image index??
+        //
+        // Checking params
+        //
+        if (params != null) {
+            for (int i = 0; i < params.length; i++) {
+                final ParameterValue param = (ParameterValue) params[i];
+                final ReferenceIdentifier name = param.getDescriptor().getName();
+                if (name.equals(AbstractGridFormat.READ_GRIDGEOMETRY2D.getName())) {
+                    final GridGeometry2D gg = (GridGeometry2D) param.getValue();
+                    requestedEnvelope = new GeneralEnvelope((Envelope) gg.getEnvelope2D());
+                    dim = gg.getGridRange2D().getBounds();
+                    continue;
+                }
+                if (name.equals(AbstractGridFormat.OVERVIEW_POLICY.getName())) {
+                    overviewPolicy = (OverviewPolicy) param.getValue();
+                    continue;
+                }
+                if (name.equals(AbstractGridFormat.INPUT_TRANSPARENT_COLOR.getName())) {
+                    inputTransparentColor = (Color) param.getValue();
+                    continue;
+                }
+                if (name.equals(AbstractGridFormat.SUGGESTED_TILE_SIZE.getName())) {
+                    String suggestedTileSize_ = (String) param.getValue();
+                    if (suggestedTileSize_ != null && suggestedTileSize_.length() > 0) {
+                        suggestedTileSize_ = suggestedTileSize_.trim();
+                        int commaPosition = suggestedTileSize_.indexOf(",");
+                        if (commaPosition < 0) {
+                            int tileDim = Integer.parseInt(suggestedTileSize_);
+                            suggestedTileSize = new int[] {tileDim, tileDim};
+                        } else {
+                            int tileW =
+                                    Integer.parseInt(
+                                            suggestedTileSize_.substring(0, commaPosition));
+                            int tileH =
+                                    Integer.parseInt(
+                                            suggestedTileSize_.substring(commaPosition + 1));
+                            suggestedTileSize = new int[] {tileW, tileH};
+                        }
+                    }
+                    continue;
+                }
+                if (name.equals(GdalVfsFormat.RESCALE_PIXELS.getName())) {
+                    rescalePixels = Boolean.TRUE.equals(param.getValue());
+                }
+            }
+        }
+
+        Hints newHints = null;
+        if (suggestedTileSize != null) {
+            newHints = hints.clone();
+            final ImageLayout layout = new ImageLayout();
+            layout.setTileGridXOffset(0);
+            layout.setTileGridYOffset(0);
+            layout.setTileHeight(suggestedTileSize[1]);
+            layout.setTileWidth(suggestedTileSize[0]);
+            newHints.add(new RenderingHints(JAI.KEY_IMAGE_LAYOUT, layout));
+        }
+
         BufferedImage bi  = imageReader.read(0);
+        PlanarImage coverageRaster =  PlanarImage.wrapRenderedImage(bi);
+// applying rescale if needed
+        if (rescalePixels) {
+            if (!Double.isNaN(noData)) {
+                // Force nodata settings since JAI ImageRead may lost that
+                // We have to make sure that noData pixels won't be rescaled
+                PlanarImage t = PlanarImage.wrapRenderedImage(coverageRaster);
+                t.setProperty(NoDataContainer.GC_NODATA, new NoDataContainer(noData));
+                coverageRaster = t;
+            }
+            coverageRaster =
+                    PlanarImage.wrapRenderedImage(
+                            applyRescaling(
+                                    scales, offsets, coverageRaster, newHints));
+        }
 
-        return (GridCoverage2D) createImageCoverage(PlanarImage.wrapRenderedImage(bi));
+        //
+        // MASKING INPUT COLOR as indicated
+        //
+        if (inputTransparentColor != null) {
+            coverageRaster =
+                    new ImageWorker(coverageRaster)
+                            .setRenderingHints(newHints)
+                            .makeColorTransparent(inputTransparentColor)
+                            .getRenderedOperation();
+        }
+
+        //
+        // External/Internal Masking
+        //
+        // ROI definition
+        ROI roi = null;
+        // Using MaskOvrProvider
+        /*
+        if (hasMaskOvrProvider) {
+            // Parameter definition
+            GridEnvelope ogr = getOriginalGridRange();
+            Rectangle sourceRegion;
+            if (readP.getSourceRegion() != null) {
+                sourceRegion = readP.getSourceRegion();
+            } else {
+                sourceRegion = new Rectangle(ogr.getSpan(0), ogr.getSpan(1));
+            }
+
+            MaskOverviewProvider.MaskInfo info = maskOvrProvider.getMaskInfo(imageChoice, sourceRegion, readP);
+            if (info != null) {
+                // Reading Mask
+                RenderedOp roiRaster =
+                        readROIRaster(
+                                info.streamSpi,
+                                URLs.fileToUrl(info.file),
+                                info.index,
+                                newHints,
+                                info.readParameters);
+                roi = MaskOverviewProvider.scaleROI(roiRaster, coverageRaster.getBounds());
+            }
+        }
+*/
+
+        return createImageCoverage(coverageName, coverageRaster, null);
     }
 
     @Override
@@ -527,9 +690,83 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
                 "The specified coverageName " + coverageName + "is not supported");
     }
 
-    @Override
-    public void skip() {
+    /**
+     * Applies values rescaling if either the scales or the offsets array is non null, or has any
+     * value that is not a default (1 for scales, 0 for offsets)
+     *
+     * @param scales The scales array
+     * @param offsets The offsets array
+     * @param image The image to be rescaled
+     * @param hints The image processing hints, if any (can be null)
+     * @return The original image, or a rescaled image
+     */
+    public static RenderedImage applyRescaling(
+            Double[] scales, Double[] offsets, RenderedImage image, Hints hints) {
+        // if there is nothing to do, return immediately
+        if (scales == null && offsets == null) {
+            return image;
+        }
 
+        // convert to primitives, apply defaults to nullable elements
+        int numBands = image.getSampleModel().getNumBands();
+        double[] pscales = toPrimitiveArray(scales, numBands, 1);
+        double[] poffsets = toPrimitiveArray(offsets, numBands, 0);
+        boolean hasRescaling = false;
+        for (int i = 0; i < numBands && !hasRescaling; i++) {
+            hasRescaling = poffsets[i] != 0 || pscales[i] != 1;
+        }
+        if (!hasRescaling) {
+            return image;
+        }
+
+        // use the input hints if possible, but create a proper layout to impose the target data
+        // type
+        RenderingHints localHints =
+                hints != null
+                        ? hints.clone()
+                        : (RenderingHints) JAI.getDefaultInstance().getRenderingHints().clone();
+        final ImageLayout layout =
+                Optional.ofNullable((ImageLayout) localHints.get(JAI.KEY_IMAGE_LAYOUT))
+                        .map(il -> (ImageLayout) il.clone())
+                        .orElse(new ImageLayout2(image));
+        SampleModel sm =
+                RasterFactory.createBandedSampleModel(
+                        DataBuffer.TYPE_DOUBLE,
+                        image.getTileWidth(),
+                        image.getTileHeight(),
+                        image.getSampleModel().getNumBands());
+        layout.setSampleModel(sm);
+        layout.setColorModel(
+                new ComponentColorModel(
+                        new BogusColorSpace(numBands),
+                        false,
+                        false,
+                        Transparency.OPAQUE,
+                        DataBuffer.TYPE_DOUBLE));
+        localHints.put(JAI.KEY_IMAGE_LAYOUT, layout);
+
+        // at least one band is getting rescaled, apply the operation
+        ImageWorker iw = new ImageWorker(image);
+        iw.setRenderingHints(localHints);
+        iw.rescale(pscales, poffsets);
+        return iw.getRenderedImage();
+    }
+
+    private static double[] toPrimitiveArray(Double[] input, int numBands, double defaultValue) {
+        double[] result = new double[numBands];
+        Arrays.fill(result, defaultValue);
+
+        if (input != null) {
+            int loopMax = Math.min(input.length, numBands);
+            for (int i = 0; i < loopMax; i++) {
+                Double v = input[i];
+                if (v != null) {
+                    result[i] = v;
+                }
+            }
+        }
+
+        return result;
     }
 
     @Override
@@ -594,10 +831,6 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         return getNumOverviews(coverageName);
     }
 
-    //@Override
-    //public DatasetLayout getDatasetLayout() {
-    //    return null;
-   // }
 
     @Override
     public DatasetLayout getDatasetLayout(String coverageName) {
@@ -606,7 +839,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
 
     @Override
     public ImageLayout getImageLayout() throws IOException {
-        return null;
+        return layout;
     }
 
     public String getCoverageName() {
@@ -615,7 +848,7 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
 
     @Override
     public ImageLayout getImageLayout(String coverageName) throws IOException {
-        return null;
+        return layout;
     }
 
     @Override
@@ -819,54 +1052,6 @@ public class GdalVfsReader extends AbstractGridCoverage2DReader {//BaseGDALGridC
         this.vfsPath = vfsPath;
     }
 
-
-    /**
-     * Creates a {@link GridCoverage} for the provided {@link PlanarImage} using the {@link
-     * #raster2Model} that was provided for this coverage.
-     *
-     * <p>This method is vital when working with coverages that have a raster to model
-     * transformation that is not a simple scale and translate.
-     *
-     * @param image contains the data for the coverage to create.
-     * @param raster2Model is the {@link MathTransform} that maps from the raster space to the model
-     *     space.
-     * @return a {@link GridCoverage}
-     * @throws IOException
-     */
-    protected GridCoverage createCoverageFromImage(PlanarImage image, MathTransform raster2Model)
-            throws IOException {
-        // creating bands
-        final SampleModel sm = image.getSampleModel();
-        final ColorModel cm = image.getColorModel();
-        final int numBands = sm.getNumBands();
-        final GridSampleDimension[] bands = new GridSampleDimension[numBands];
-        // setting bands names.
-        Set<String> bandNames = new HashSet<String>();
-        for (int i = 0; i < numBands; i++) {
-            final ColorInterpretation colorInterpretation = TypeMap.getColorInterpretation(cm, i);
-            // make sure we create no duplicate band names
-            String bandName;
-            if (colorInterpretation == null
-                    || colorInterpretation == ColorInterpretation.UNDEFINED
-                    || bandNames.contains(colorInterpretation.name())) {
-                bandName = "Band" + (i + 1);
-            } else {
-                bandName = colorInterpretation.name();
-            }
-            bands[i] = new GridSampleDimension(bandName);
-        }
-
-        // creating coverage
-        if (raster2Model != null) {
-            return coverageFactory.create(
-                    coverageName, image, crs, raster2Model, bands, null, null);
-        }
-
-        return coverageFactory.create(
-                // TODO what envelope???
-                //coverageName, image, new GeneralEnvelope(coverageEnvelope), bands, null, null);
-                coverageName, image, new GeneralEnvelope(originalEnvelope), bands, null, null);
-    }
 
     /**
      * Creates a {@link GridCoverage} for the provided {@link PlanarImage} using the  that was provided for this coverage.

@@ -22,15 +22,14 @@ public class GdalVfsImageInputStream extends ImageInputStreamImpl {
     }
 
     @Override
-    public int read() throws IOException {
+    public int read() {
         return 1;
     }
 
     @Override
-    public int read(byte[] b, int off, int len) throws IOException {
+    public int read(byte[] b, int off, int len) {
         b = new byte[len];
         return len;
-        //return 1;
     }
 
 }

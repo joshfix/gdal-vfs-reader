@@ -9,18 +9,21 @@ import it.geosolutions.imageio.gdalframework.GDALUtilities;
 import it.geosolutions.imageio.imageioimpl.EnhancedImageReadParam;
 import org.gdal.gdal.Band;
 import org.gdal.gdal.Dataset;
+import org.gdal.gdal.TranslateOptions;
 import org.gdal.gdal.gdal;
 import org.gdal.gdalconst.gdalconst;
 import org.gdal.gdalconst.gdalconstConstants;
 
 import javax.imageio.ImageReadParam;
 import javax.imageio.ImageTypeSpecifier;
+import javax.imageio.metadata.IIOMetadata;
 import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.*;
 import java.io.IOException;
 import java.nio.*;
 import java.util.*;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -34,7 +37,7 @@ public class GdalVfsImageReader extends GDALImageReader {
     /**
      * The LOGGER for this class.
      */
-    private static final Logger LOGGER = Logger.getLogger(it.geosolutions.imageio.gdalframework.GDALImageReader.class.toString());
+    private static final Logger LOGGER = Logger.getLogger(GdalVfsImageReader.class.toString());
 
     /**
      * list of childs subdatasets names (if any) contained into the source
@@ -51,8 +54,12 @@ public class GdalVfsImageReader extends GDALImageReader {
      */
     private ImageInputStream imageInputStream;
 
-    private VfsPath vfsPath = null;
-
+    private VfsPath vfsPath;
+/*
+    private Map<String, String> translatedNames = new HashMap<>();
+    private Map<String, Dataset> translatedDatasets = new HashMap<>();
+    private Map<String, GDALCommonIIOImageMetadata> translatedMetadata = new HashMap<>();
+*/
     /**
      * {@link HashMap} containing couples (datasetName,
      * {@link GDALCommonIIOImageMetadata}).
@@ -86,6 +93,10 @@ public class GdalVfsImageReader extends GDALImageReader {
         this.nSubdatasets = numSubdatasets;
     }
 
+    public IIOMetadata getImageMetadata(int imageIndex) throws IOException {
+        return this.getDatasetMetadata(imageIndex);
+    }
+
     /**
      * Retrieves a {@link GDALCommonIIOImageMetadata} by index.
      *
@@ -99,10 +110,18 @@ public class GdalVfsImageReader extends GDALImageReader {
         // getting dataset name
         final String datasetName = datasetNames[imageIndex];
 
+        //String translatedName = translatedNames.get(datasetName);
         GDALCommonIIOImageMetadata retVal = datasetMetadataMap.get(datasetName);
+        //GDALCommonIIOImageMetadata retVal = translatedMetadata.get(translatedName);
         if (retVal == null) {
             // do we need to create a dataset
             Dataset ds = datasetsMap.get(datasetName);
+/*
+            String translateName = "/vsimem/" + UUID.randomUUID();
+            Dataset dst = translate(ds, translateName);
+            translatedDatasets.put(translateName, dst);
+            translatedNames.put(datasetNames[imageIndex], translateName);
+*/
             if (ds == null) {
                 ds = GDALUtilities.acquireDataSet(datasetName, gdalconst.GA_ReadOnly);
                 Dataset dsOld = datasetsMap.putIfAbsent(datasetName, ds);
@@ -116,12 +135,16 @@ public class GdalVfsImageReader extends GDALImageReader {
             // Add a new GDALCommonIIOImageMetadata to the HashMap
             final GDALCommonIIOImageMetadata datasetMetadataNew = createDatasetMetadata(datasetName);
             retVal = datasetMetadataMap.put(datasetName, datasetMetadataNew);
+/*
+            GDALCommonIIOImageMetadata tm = createDatasetMetadata(translateName);
+            retVal = translatedMetadata.put(translateName, tm);
+*/
             if (retVal == null) {
                 retVal = datasetMetadataNew;
+                //retVal = tm;
             }
         }
         return retVal;
-
     }
 
     /**
@@ -182,20 +205,28 @@ public class GdalVfsImageReader extends GDALImageReader {
         if (vfsPath != null) {
             mainDatasetName = vfsPath.getPath();
             mainDataSet = GDALUtilities.acquireDataSet(vfsPath.getPath(), gdalconstConstants.GA_ReadOnly);
+
             if (mainDataSet == null) {
                 mainDataSet = gdal.Open(vfsPath.getPath());
             }
         }
         if (mainDataSet != null) {
-            //isInputDecodable = ((GDALImageReaderSpi) this.getOriginatingProvider()).isDecodable(mainDataSet);
-            isInputDecodable = true;
-        } else
-            isInputDecodable = false;
+            try {
+                isInputDecodable = this.getOriginatingProvider().canDecodeInput(mainDataSet);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
 
         if (isInputDecodable) {
             // cache dataset
             datasetsMap.put(mainDatasetName, mainDataSet);
-
+/*
+            String translateName = "/vsimem/" + UUID.randomUUID();
+            Dataset dst = translate(mainDataSet, translateName);
+            translatedDatasets.put(translateName, dst);
+            translatedNames.put(mainDatasetName, translateName);
+*/
             // input is decodable
             //super.setInput(imageInputStream, seekForwardOnly, ignoreMetadata);
 
@@ -216,7 +247,10 @@ public class GdalVfsImageReader extends GDALImageReader {
                 nSubdatasets = 1;
                 datasetNames = new String[1];
                 datasetNames[0] = mainDatasetName;
-                datasetMetadataMap.put(datasetNames[0], this.createDatasetMetadata(mainDatasetName));
+                //datasetMetadataMap.put(datasetNames[0], createDatasetMetadata(mainDataSet, mainDatasetName));
+                datasetMetadataMap.put(datasetNames[0], createDatasetMetadata(mainDatasetName));
+
+                //translatedMetadata.put(translateName, createDatasetMetadata(translateName));
 
             } else {
                 datasetNames = new String[nSubdatasets + 1];
@@ -226,7 +260,9 @@ public class GdalVfsImageReader extends GDALImageReader {
                     datasetNames[i] = subdatasetName.substring(nameStartAt);
                 }
                 datasetNames[nSubdatasets] = mainDatasetName;
-                datasetMetadataMap.put(datasetNames[nSubdatasets], createDatasetMetadata(mainDataSet, datasetNames[nSubdatasets]));
+                datasetMetadataMap.put(datasetNames[nSubdatasets], createDatasetMetadata(mainDataSet, mainDatasetName));
+
+                //translatedMetadata.put(translateName, createDatasetMetadata(dst, translateName));
             }
             // clean list
             subdatasets.clear();
@@ -243,7 +279,35 @@ public class GdalVfsImageReader extends GDALImageReader {
         }
     }
 
+    public void dispose() {
+        super.dispose();
 
+    }
+
+    /**
+     * Reset main values
+     */
+    public void reset() {
+        this.input = null;
+        dispose();
+        super.reset();
+        nSubdatasets = -1;
+    }
+
+/*
+    protected Dataset translate(Dataset dataset, String name) {
+        List<String> options = new ArrayList<>();
+        options.add("-of");
+        options.add("GTiff");
+        options.add("-a_nodata");
+        options.add("0.0");
+        //options.add("-ot");
+        //options.add("Byte");
+        TranslateOptions to = new TranslateOptions(new Vector(options));
+
+        return gdal.Translate(name, dataset, to);
+    }
+*/
     /**
      * Copied from imageio-ext GDALImageReader
      *
@@ -269,7 +333,8 @@ public class GdalVfsImageReader extends GDALImageReader {
 
         SampleModel destSm = destSampleModel != null ? destSampleModel : itemMetadata.getSampleModel();
 
-        final Dataset dataset = datasetsMap.get(itemMetadata.getDatasetName());
+        Dataset dataset = datasetsMap.get(itemMetadata.getDatasetName());
+        //Dataset dataset = translatedDatasets.get(itemMetadata.getDatasetName());
         if (dataset == null)
             throw new IOException("Error while acquiring the input dataset " + itemMetadata.getDatasetName());
 
@@ -309,7 +374,7 @@ public class GdalVfsImageReader extends GDALImageReader {
 
             // NOTE: Bands are not 0-base indexed, so we must add 1
             pBand = dataset.GetRasterBand(1);
-
+//pBand.SetNoDataValue(Double.NaN);
             // setting buffer properties
             bufferType = pBand.getDataType();
             typeSizeInBytes = gdal.GetDataTypeSize(bufferType) / 8;
